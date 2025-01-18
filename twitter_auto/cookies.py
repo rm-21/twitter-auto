@@ -1,3 +1,4 @@
+import json
 import time
 from typing import Any
 
@@ -16,6 +17,12 @@ def _setup_driver() -> WebDriver:
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
+
+    # Enable logging
+    options.set_capability(
+        "goog:loggingPrefs", {"browser": "ALL", "performance": "ALL"}
+    )
+
     options.add_argument("--start-maximized")
     options.add_argument("--disable-extensions")
     options.add_argument("--no-sandbox")
@@ -29,18 +36,58 @@ def _setup_driver() -> WebDriver:
     return driver
 
 
-def get_cookies(
+def get_network_calls(driver: WebDriver) -> list[Any]:
+    calls = []
+    browser_log = driver.get_log("performance")
+    for log in browser_log:
+        if "message" not in log:
+            continue
+
+        log_entry = json.loads(log["message"])
+
+        try:
+            # Look for network requests
+            if (
+                "message" in log_entry
+                and "method" in log_entry["message"]
+                and log_entry["message"]["method"] == "Network.requestWillBeSent"
+            ):
+                url = log_entry["message"]["params"]["request"]["url"]
+                if "client_event.json" in url:
+                    calls.append(
+                        {
+                            "url": url,
+                            "headers": log_entry["message"]["params"]["request"].get(
+                                "headers", {}
+                            ),
+                            "timestamp": log_entry["message"]["params"].get(
+                                "timestamp", ""
+                            ),
+                        }
+                    )
+        except Exception as e:
+            print(f"Error processing log entry: {e}")
+            continue
+
+    return calls
+
+
+def get_session_info(
     email: str,
     username: str,
     password: str,
-) -> list[dict[Any, Any]] | None:
+) -> dict[str, str | None] | None:
     driver = _setup_driver()
-    wait = WebDriverWait(driver, 10)  # 10 second timeout
+    wait = WebDriverWait(driver, 10)
+    network_calls = []
 
     try:
+        # Enable CDP Network domain
+        driver.execute_cdp_cmd("Network.enable", {})
+
         driver.get("https://x.com/login")
 
-        # Step 1: Enter email
+        # Complete login flow first
         username_field = wait.until(EC.presence_of_element_located((By.NAME, "text")))
         username_field.send_keys(email)
 
@@ -49,7 +96,6 @@ def get_cookies(
         )
         next_button.click()
 
-        # Step 2: Handle verification
         try:
             verify_field = wait.until(EC.presence_of_element_located((By.NAME, "text")))
             verify_field.send_keys(username)
@@ -60,11 +106,9 @@ def get_cookies(
             next_button.click()
         except Exception as exc:
             print(exc)
-            # Keep the long wait for potential manual verification
             time.sleep(120)
             pass
 
-        # Step 3: Enter password
         password_field = wait.until(
             EC.presence_of_element_located((By.NAME, "password"))
         )
@@ -75,15 +119,40 @@ def get_cookies(
         )
         login_button.click()
 
-        # Keep longer waits for post-login actions
+        # Wait for login to complete and cookies to form
         time.sleep(10)
         cookies = driver.get_cookies()
 
-        return cookies
+        # Navigate to home to trigger events
+        driver.get("https://x.com/home")
+        time.sleep(5)  # Wait for potential events to trigger
+
+        # Get network calls
+        network_calls = get_network_calls(driver)
+
+        auth_token = [cookie for cookie in cookies if cookie["name"] == "auth_token"][
+            0
+        ]["value"]
+        csrf_token = [cookie for cookie in cookies if cookie["name"] == "ct0"][0][
+            "value"
+        ]
+
+        bearer_token = None
+        if network_calls:
+            bearer_token = network_calls[0]["headers"]["authorization"].split(" ")[-1]
+
+        return {
+            "auth_token": auth_token,
+            "csrf_token": csrf_token,
+            "bearer_token": bearer_token,
+        }
 
     except Exception as e:
         print(f"An error occurred: {e}")
+        return None
     finally:
-        pass
-
-    return None
+        try:
+            driver.execute_cdp_cmd("Network.disable", {})
+        except Exception:
+            pass
+        driver.quit()
