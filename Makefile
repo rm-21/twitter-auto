@@ -1,10 +1,19 @@
-.DEFAULT_GOAL := all
+.DEFAULT_GOAL := install
 
 INSTALL_STAMP := .install.stamp
 POETRY := $(shell command -v poetry 2> /dev/null)
 
+install: $(INSTALL_STAMP)
+$(INSTALL_STAMP): pyproject.toml
+	@if [ -z $(POETRY) ]; then echo "\033[1;31mPoetry could not be found. See https://python-poetry.org/docs/\033[0m"; exit 2; fi
+	$(POETRY) run pip install --upgrade pip
+	$(POETRY) install --without dev
+	@touch $(INSTALL_STAMP)
+	@echo "\033[1;32mInstallation completed successfully.\033[0m"
+	@echo ""
+
 .PHONY: all
-all: install format lint
+all: install-dev format lint
 
 .PHONY: help
 help:
@@ -18,7 +27,7 @@ help:
 	@echo ""
 	@echo "\033[1;34mCheck the Makefile to know exactly what each target is doing.\033[0m"
 
-install: $(INSTALL_STAMP)
+install-dev: $(INSTALL_STAMP)
 $(INSTALL_STAMP): pyproject.toml
 	@if [ -z $(POETRY) ]; then echo "\033[1;31mPoetry could not be found. See https://python-poetry.org/docs/\033[0m"; exit 2; fi
 	$(POETRY) run pip install --upgrade pip
