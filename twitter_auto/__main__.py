@@ -13,6 +13,7 @@ async def _subscribe(
     auth_token: str,
     csrf_token: str,
     user_id_to_subscribe_to: int,
+    index: int,
 ) -> bool:
     url = "https://x.com/i/api/1.1/friendships/create.json"
     async with httpx.AsyncClient(timeout=120) as client:
@@ -59,12 +60,12 @@ async def _subscribe(
 
         if res.status_code == 200:
             print(
-                f"[{dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Followed: {res.json()["screen_name"]}"
+                f"[{dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {index} Followed: {res.json()["screen_name"]}"
             )
             return True
         else:
             print(
-                f"[{dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Failed for ID: {user_id_to_subscribe_to}"
+                f"[{dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {index} Failed for ID: {user_id_to_subscribe_to}"
             )
             return False
 
@@ -74,13 +75,18 @@ async def _subscribe_multiple(
     auth_token: str,
     csrf_token: str,
     user_ids_to_subscribe_to: list[int],
+    index: int = 0,
 ) -> None:
-    for _id in user_ids_to_subscribe_to:
+    for idx, _id in enumerate(user_ids_to_subscribe_to):
+        if idx < index:
+            continue
+
         await _subscribe(
             bearer_token=bearer_token,
             auth_token=auth_token,
             csrf_token=csrf_token,
             user_id_to_subscribe_to=_id,
+            index=idx,
         )
         await asyncio.sleep(2)
 
@@ -100,6 +106,7 @@ async def subscribe(
     username: str,
     password: str,
     file_loc: str,
+    index: int = 0,
 ) -> None:
     # Read IDs
     try:
@@ -136,6 +143,7 @@ async def subscribe(
         auth_token=info["auth_token"],
         csrf_token=info["csrf_token"],
         user_ids_to_subscribe_to=ids,
+        index=index,
     )
 
     return None
@@ -162,8 +170,15 @@ def main() -> None:
         "-f", "--file", required=True, help="Path to the file containing user IDs"
     )
 
-    args = parser.parse_args()
+    parser.add_argument(
+        "-i",
+        "--index",
+        required=False,
+        help="Start from a specific line number",
+        default=0,
+    )
 
+    args = parser.parse_args()
     try:
         asyncio.run(
             subscribe(
@@ -171,6 +186,7 @@ def main() -> None:
                 username=args.username,
                 password=args.password,
                 file_loc=args.file,
+                index=int(args.index),
             )
         )
         print("Successfully subscribed to all users!")
